@@ -15,6 +15,17 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebChromeClientHostApi;
+import androidx.core.app.ActivityCompat;
+import android.webkit.PermissionRequest;
+import android.Manifest;
+import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+import  java.util.Arrays;
+import java.util.regex.Pattern;
+import android.app.Activity;
+import 	android.app.AlertDialog;
+import android.content.DialogInterface;
 
 /**
  * Host api implementation for {@link WebChromeClient}.
@@ -22,6 +33,7 @@ import io.flutter.plugins.webviewflutter.GeneratedAndroidWebView.WebChromeClient
  * <p>Handles creating {@link WebChromeClient}s that intercommunicate with a paired Dart object.
  */
 public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
+  private static final String TAG = "WebChromeClientHostApiImpl";
   private final InstanceManager instanceManager;
   private final WebChromeClientCreator webChromeClientCreator;
   private final WebChromeClientFlutterApiImpl flutterApi;
@@ -32,6 +44,10 @@ public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
   public static class WebChromeClientImpl extends WebChromeClient {
     private final WebChromeClientFlutterApiImpl flutterApi;
     @Nullable private WebViewClient webViewClient;
+    private View customView;
+    private WebView webView;
+    private PermissionRequest videoPermission;
+    private boolean isGranted = false;
 
     /**
      * Creates a {@link WebChromeClient} that passes arguments of callbacks methods to Dart.
@@ -107,8 +123,80 @@ public class WebChromeClientHostApiImpl implements WebChromeClientHostApi {
 
     @Override
     public void onProgressChanged(WebView view, int progress) {
+      webView = view;
+      if (webView == null) {
+        webView = view;
+      }
       flutterApi.onProgressChanged(this, view, (long) progress, reply -> {});
     }
+
+    private static final int VIDEO_CAPTURE_PERMISSION_REQUEST = 1111;
+
+    @Override
+    public void onPermissionRequest(final PermissionRequest request) {
+      Log.d(TAG, "onPermissionRequest: " + request.getOrigin().toString());
+      Log.d(TAG, "onPermissionRequest: " + Arrays.toString(request.getResources()));
+      if (Pattern.matches("^https:\\/\\/.+\\.singpass.gov.sg/.*", request.getOrigin().toString())) {
+        if (isGranted) {
+          request.grant(request.getResources());
+        } else {
+          AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder((Activity) webView.getContext())
+                  .setTitle("Allow permission to turn on the camera")
+                  .setPositiveButton("Allow", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                      dialog.dismiss();
+                      request.grant(request.getResources());
+                      isGranted = true;
+                      Log.d(TAG, "Granted");
+                    }
+                  })
+                  .setNegativeButton("Deny", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                      dialog.dismiss();
+                      request.deny();
+                      isGranted = false;
+                      Log.d(TAG, "Denied");
+                    }
+                  });
+          AlertDialog alertDialog = alertDialogBuilder.create();
+          alertDialog.show();
+        }
+        videoPermission = request;
+      } else {
+        request.deny();
+      }
+    }
+
+    @Override
+    public void onShowCustomView(View view, int requestedOrientation, CustomViewCallback callback) {
+      onShowCustomView(view, callback);    //To change body of overridden methods use File | Settings | File Templates.
+    }
+
+    @Override
+    public void onShowCustomView(View view, WebChromeClient.CustomViewCallback callback) {
+      super.onShowCustomView(view,callback);
+
+      if (customView != null) {
+        callback.onCustomViewHidden();
+        return;
+      }
+      customView = view;
+      ((ViewGroup) webView.getParent()).addView(view);
+      webView.setVisibility(View.GONE);
+  }
+
+    @Override
+    public void onHideCustomView () {
+      super.onHideCustomView();
+      if (customView == null)
+        return;
+
+      webView.setVisibility(View.VISIBLE);
+      ((ViewGroup) webView.getParent()).removeView(customView);
+      customView = null;
+  }
 
     /**
      * Set the {@link WebViewClient} that calls to {@link WebChromeClient#onCreateWindow} are passed
